@@ -759,7 +759,7 @@ async function renderPage(fl,g,meta){
   x.fillStyle="#626d69";x.font="400 19px "+FONT;x.fillText("Generated from the M&E Point Planner. For coordination and quotation, not for construction. Positions ±100 mm, confirm on site.  由机电点位规划导出，仅供协调与报价，现场确认。",70,TY+185);
   return cv.toDataURL("image/jpeg",0.86)}
 async function coverPage(list,meta){const cv=document.createElement("canvas");cv.width=PDFW;cv.height=PDFH;const x=cv.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,PDFW,PDFH);
-  x.fillStyle="#1c2220";x.font="700 90px "+FONT;x.fillText("Liancon HQ – M&E layout",120,320);x.font="500 50px "+FONT;x.fillStyle="#626d69";x.fillText("机电点位图 · 21 Jalan Kempas 2/2",120,400);
+  x.fillStyle="#1c2220";x.font="700 84px "+FONT;x.fillText("Liancon HQ – M&E layout"+(meta.label?" · "+meta.label:""),120,320);x.font="500 50px "+FONT;x.fillStyle="#626d69";x.fillText("机电点位图 · 21 Jalan Kempas 2/2",120,400);
   x.font="500 34px "+FONT;x.fillText("Issued "+meta.date+" · per service, per floor · with circuits and cable routing",120,470);
   let y=620;x.fillStyle="#1c2220";x.font="700 40px "+FONT;x.fillText("Contents 目录",120,y);y+=70;
   list.forEach((it,i)=>{const GG=GROUPS.find(q=>q.k===it.g);x.fillStyle=getComputedStyle(document.documentElement).getPropertyValue(GG.c).trim();x.fillRect(120,y-30,24,30);
@@ -768,23 +768,92 @@ async function coverPage(list,meta){const cv=document.createElement("canvas");cv
   y+=wrapText(x,"Each sheet shows one service on one floor. Lights, power and aircon sheets show the circuits: coloured lines run from each switch gang to the points it controls, and coloured rings/tags give each point's DB circuit, listed on the right with DB way, MCB and cable. Network sheets show the Cat6 home-run routing back to the rack with estimated lengths.",120,y,PDFW-240,40)+20;
   wrapText(x,"每页 = 一个系统 × 一层。照明/插座/冷气页显示回路：彩色线从开关连到所控点位，彩色圈与编号表示所属回路，右侧列出配电位、断路器与电缆。网络页显示 Cat6 网线回机柜的走线与估计长度。",120,y,PDFW-240,40);
   return cv.toDataURL("image/jpeg",0.86)}
-async function exportPdf(){const btn=$("#bPdf");if(btn.disabled)return;btn.disabled=true;
+// ---- schedule sheets (tables drawn on canvas, CJK-safe) ----
+function schedPages(title,cn,headers,widths,rows,meta){
+  // rows: [{cells:[...], color?:css, group?:string}]  -> returns array of canvases
+  const pages=[];let cv,x,y;const X0=70,W=PDFW-140,LH=30;
+  const tw=widths.reduce((a,b)=>a+b,0);const cw=widths.map(v=>v/tw*W);
+  const newPage=()=>{cv=document.createElement("canvas");cv.width=PDFW;cv.height=PDFH;x=cv.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,PDFW,PDFH);
+    x.fillStyle="#1c2220";x.font="600 30px "+FONT;x.fillText("LIANCON HQ · 21 JALAN KEMPAS 2/2 · M&E SCHEDULE 机电表",X0,80);
+    x.font="700 60px "+FONT;x.fillText(title,X0,165);const tw2=x.measureText(title).width;x.font="500 36px "+FONT;x.fillStyle="#626d69";x.fillText(cn||"",X0+tw2+24,165);
+    x.strokeStyle="#1c2220";x.lineWidth=3;x.beginPath();x.moveTo(X0,205);x.lineTo(PDFW-X0,205);x.stroke();y=260;
+    x.font="700 22px "+FONT;x.fillStyle="#1c2220";let cx=X0;headers.forEach((h,i)=>{wrapText(x,h,cx+6,y,cw[i]-12,26);cx+=cw[i]});y+=40;
+    x.strokeStyle="#9aa39f";x.lineWidth=1.5;x.beginPath();x.moveTo(X0,y-22);x.lineTo(PDFW-X0,y-22);x.stroke();pages.push(cv)};
+  newPage();
+  for(const r of rows){
+    if(r.group){if(y>2620)newPage();x.fillStyle="#626d69";x.font="700 24px "+FONT;x.fillText(r.group,X0,y+14);y+=50;continue}
+    // measure
+    x.font="400 21px "+FONT;const hs=r.cells.map((c,i)=>{const t=String(c==null?"":c);const words=t.length;return Math.max(1,Math.ceil(x.measureText(t).width/(cw[i]-12)))*LH});
+    const rh=Math.max(...hs)+10;if(y+rh>2700)newPage();
+    let cx=X0;r.cells.forEach((c,i)=>{x.fillStyle=(i===0&&r.color)?r.color:"#1c2220";x.font=(i===0?"700 22px ":"400 21px ")+FONT;wrapText(x,String(c==null?"":c),cx+6,y,cw[i]-12,LH);cx+=cw[i]});
+    y+=rh;x.strokeStyle="#d3d8d5";x.lineWidth=1;x.beginPath();x.moveTo(X0,y-20);x.lineTo(PDFW-X0,y-20);x.stroke()}
+  pages.forEach((p,i)=>{const c=p.getContext("2d");c.fillStyle="#626d69";c.font="400 20px "+FONT;c.fillText(title+" · "+meta.date+" · page "+(i+1)+" / "+pages.length,70,PDFH-60)});
+  return pages}
+function circRows(fls,svc){const rows=[];
+  fls.forEach(f=>{let L=circs(f);if(svc)L=L.filter(c=>circuitsFor(f,svc).some(q=>q.id===c.id));if(!L.length)return;rows.push({group:f});const P=data[f]||[];
+    L.forEach(c=>{const cnt={};P.filter(p=>p.c===c.id&&!Array.isArray(p.g)).forEach(p=>{cnt[p.t]=(cnt[p.t]||0)+1});
+      const sws=P.filter(p=>Array.isArray(p.g)&&p.g.includes(c.id)).map(p=>zoneOf(p,f)+" · "+((T[p.t]||[])[2]||"")+"-gang, gang "+(p.g.indexOf(c.id)+1));
+      rows.push({color:cCol(f,c.id),cells:[c.id,(c.n||"")+(c.cn?"  "+c.cn:""),sws.join("; ")||(c.sw||"—"),Object.entries(cnt).map(([k,v])=>v+"× "+((T[k]||[])[3]||k)).join(", ")||"—",[c.way,c.mcb,c.cable].filter(Boolean).join(" · ")||"—",c.sh||"—"]})})});
+  return rows}
+function cabRows(fls){const {runs,hubRuns}=cableRuns();const rows=[];let tot=0,n=0;
+  fls.forEach(f=>{const rs=runs.filter(r=>r.f===f);if(!rs.length)return;rows.push({group:f});
+    rs.forEach(r=>{rows.push({color:"#0a5cc4",cells:[r.label,(T[r.p.t]||[0,0,0,r.p.t])[3]+(r.via?" ("+r.via+")":"")+(CN[r.p.t]?"  "+CN[r.p.t]:""),zoneOf(r.p,f),r.len==null?"–":r.len+" m"]});if(r.len)tot+=r.len;n++})});
+  const hr=hubRuns.filter(r=>fls.includes(r.f));if(hr.length){rows.push({group:"At the door hub (not to rack) 接到门禁控制器"});hr.forEach(r=>rows.push({cells:[r.f,(T[r.p.t]||[0,0,0,r.p.t])[3],r.cable,r.len==null?"–":r.len+" m"]}))}
+  rows.push({group:"Summary 总结"});rows.push({cells:["Runs",n+" Cat6 home runs","",""]});rows.push({cells:["Length",tot+" m estimated","+10% waste: "+Math.ceil(tot*1.1/305)+" box(es) of 305 m",""]});
+  return rows}
+// ---- export dialog ----
+function pdfDialog(){return new Promise(res=>{const sh=document.createElement("div");sh.className="sheet";
+  const fl=FLOORS.map(f=>`<label style="margin-right:14px"><input type=checkbox name=fl value="${f}" checked> ${f}</label>`).join("");
+  const sv=GROUPS.map(g=>`<label style="display:block;margin:4px 0"><input type=checkbox name=sv value="${g.k}" checked> ${g.n} <small class="cn">${GCN2[g.k]||""}</small></label>`).join("");
+  sh.innerHTML=`<div class="card" role="dialog" aria-label="Export PDF"><h2>Export PDF <small class="cn">导出PDF</small></h2>
+   <p class="hint" style="margin:0 0 8px">A3 portrait. Plans show each service with its circuits or cable routing. 每个系统一个PDF。</p>
+   <b>Floors 楼层</b><div style="margin:6px 0 12px">${fl}</div>
+   <b>Services 系统</b><div style="margin:6px 0 12px">${sv}</div>
+   <label style="display:block;margin:6px 0"><input type=checkbox name=sch checked> Add schedule sheets (circuits &amp; DB, Cat6 cables) <small class="cn">加回路表与网线表</small></label>
+   <label style="display:block;margin:6px 0"><input type=radio name=md value=split checked> One PDF per service (zip) <small class="cn">每个系统一个PDF</small></label>
+   <label style="display:block;margin:6px 0 14px"><input type=radio name=md value=one> One combined PDF <small class="cn">合并一个PDF</small></label>
+   <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-a=c>Cancel 取消</button><button class="btn" data-a=ok style="background:var(--ink);color:var(--bg)">Export 导出</button></div></div>`;
+  document.body.appendChild(sh);
+  sh.onclick=e=>{const a=e.target.closest("button")?.dataset.a;if(e.target===sh||a==="c"){sh.remove();res(null)}
+    if(a==="ok"){const q=n=>[...sh.querySelectorAll(`input[name=${n}]:checked`)].map(i=>i.value);const r={fl:q("fl"),sv:q("sv"),sch:sh.querySelector("input[name=sch]").checked,md:q("md")[0]};sh.remove();res(r)}}})}
+function loadZip(){return new Promise((ok,no)=>{if(window.JSZip)return ok(window.JSZip);const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";s.onload=()=>ok(window.JSZip);s.onerror=()=>no(new Error("Could not load the zip library"));document.head.appendChild(s)})}
+async function saveFile(name,blob){let dl=null;try{dl=await (window.claude&&window.claude.use?window.claude.use("downloads"):null)}catch(e){dl=null}
+  if(dl){try{await dl.save({filename:name,data:blob});return "saved"}catch(e){return (e&&e.code)||"error"}}
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},3000);return "saved"}
+async function buildDoc(jsPDF,svcs,fls,sch,date,label){
+  const list=[];svcs.forEach(g=>fls.forEach(f=>{if((data[f]||[]).some(p=>grpOf(p)===g))list.push({g,f})}));
+  const extra=[];
+  if(sch){const elec=svcs.filter(g=>["light","power","ac"].includes(g));
+    if(elec.length){const rows=svcs.length===1?circRows(fls,elec[0]):circRows(fls,null);if(rows.some(r=>!r.group))extra.push({t:"Circuits & DB schedule",pages:schedPages("Circuits & DB schedule","回路与配电箱表",["Tag 编号","Circuit 回路","Switched by 开关","Points 点位","DB way · MCB · cable 配电位·断路器·电缆","Shelly"],[7,22,20,24,20,7],rows,{date})})}
+    if(svcs.includes("unifi")){const rows=cabRows(fls);extra.push({t:"Cat6 cable schedule",pages:schedPages("Cat6 cable schedule","网线表",["Label 编号","Device 设备","Area 区域","Est. 约"],[12,50,25,13],rows,{date})})}}
+  if(!list.length&&!extra.length)return null;
+  const total=1+list.length+extra.reduce((a,e)=>a+e.pages.length,0);
+  const doc=new jsPDF({unit:"mm",format:"a3",orientation:"portrait",compress:true});
+  doc.addImage(await coverPage(list,{date,label}),"JPEG",0,0,297,420);doc.outline.add(null,"Cover",{pageNumber:1});
+  let pg=1,lastG=null,parent=null;
+  for(let i=0;i<list.length;i++){const it=list[i];showMsg("Preparing "+label+"… "+(i+1)+" / "+list.length);pg++;
+    const img=await renderPage(it.f,it.g,{date,no:pg,total});doc.addPage("a3","portrait");doc.addImage(img,"JPEG",0,0,297,420);
+    if(it.g!==lastG){parent=doc.outline.add(null,GROUPS.find(q=>q.k===it.g).n,{pageNumber:pg});lastG=it.g}doc.outline.add(parent,it.f,{pageNumber:pg})}
+  for(const e of extra){let first=true;for(const cv of e.pages){pg++;doc.addPage("a3","portrait");doc.addImage(cv.toDataURL("image/jpeg",0.88),"JPEG",0,0,297,420);if(first){doc.outline.add(null,e.t,{pageNumber:pg});first=false}}}
+  return doc.output("blob")}
+async function exportPdf(){const btn=$("#bPdf");if(btn.disabled)return;
+  const opt=await pdfDialog();if(!opt)return;if(!opt.fl.length||!opt.sv.length){showMsg("Pick at least one floor and one service. 请至少选一层和一个系统",true);return}
+  btn.disabled=true;
   const keep={floor,hidden:new Set(hidden),showCab,showCirc,sel,view:Object.assign({},view),theme:document.documentElement.getAttribute("data-theme")};
   try{showMsg("Preparing PDF… 正在生成 PDF");document.documentElement.setAttribute("data-theme","light");
     const {jsPDF}=await loadJsPDF();
-    const list=[];GROUPS.forEach(g=>FLOORS.forEach(f=>{if((data[f]||[]).some(p=>grpOf(p)===g.k))list.push({g:g.k,f})}));
     const d=new Date(),date=d.getDate().toString().padStart(2,"0")+"-"+(d.getMonth()+1).toString().padStart(2,"0")+"-"+d.getFullYear();
-    const doc=new jsPDF({unit:"mm",format:"a3",orientation:"portrait",compress:true});
-    doc.addImage(await coverPage(list,{date}),"JPEG",0,0,297,420);doc.outline.add(null,"Cover",{pageNumber:1});
-    let lastG=null,parent=null;
-    for(let i=0;i<list.length;i++){const it=list[i];showMsg("Preparing PDF… "+(i+1)+" / "+list.length);
-      const img=await renderPage(it.f,it.g,{date,no:i+2,total:list.length+1});doc.addPage("a3","portrait");doc.addImage(img,"JPEG",0,0,297,420);
-      if(it.g!==lastG){parent=doc.outline.add(null,GROUPS.find(q=>q.k===it.g).n,{pageNumber:i+2});lastG=it.g}
-      doc.outline.add(parent,it.f,{pageNumber:i+2})}
-    const blob=doc.output("blob");const name="Liancon HQ M&E layout "+date+".pdf";
-    let dl=null;try{dl=await (window.claude&&window.claude.use?window.claude.use("downloads"):null)}catch(e){dl=null}
-    if(dl){try{await dl.save({filename:name,data:blob});showMsg("PDF saved. 已保存",true)}catch(e){showMsg(e&&e.code==="declined"?"":"Could not save the PDF ("+((e&&e.code)||"error")+").",true)}}
-    else{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);showMsg("PDF downloaded. 已下载",true)}
+    const fls=FLOORS.filter(f=>opt.fl.includes(f)),svcs=GROUPS.map(g=>g.k).filter(k=>opt.sv.includes(k));const flTag=fls.length===3?"all floors":fls.join("+");
+    let st;
+    if(opt.md==="one"||svcs.length===1){const lab=svcs.length===1?GROUPS.find(g=>g.k===svcs[0]).n:"all services";
+      const b=await buildDoc(jsPDF,svcs,fls,opt.sch,date,lab);if(!b){showMsg("Nothing to export for that choice.",true);return}
+      st=await saveFile("Liancon HQ M&E "+lab.replace(/[&,()]/g,"").replace(/\s+/g," ")+" - "+flTag+" "+date+".pdf",b)}
+    else{const JSZip=await loadZip();const z=new JSZip();let n=0;
+      for(const g of svcs){const nm=GROUPS.find(q=>q.k===g).n;const b=await buildDoc(jsPDF,[g],fls,opt.sch,date,nm);if(!b)continue;n++;
+        z.file("Liancon HQ M&E "+String(n).padStart(2,"0")+" "+nm.replace(/[&,()]/g,"").replace(/\s+/g," ")+" - "+flTag+" "+date+".pdf",b)}
+      if(!n){showMsg("Nothing to export for that choice.",true);return}
+      showMsg("Packing "+n+" PDFs…");const zb=await z.generateAsync({type:"blob",compression:"STORE"});st=await saveFile("Liancon HQ M&E PDFs per service - "+flTag+" "+date+".zip",zb)}
+    showMsg(st==="saved"?"Saved. 已保存":(st==="declined"?"":"Could not save ("+st+")."),true)
   }catch(e){showMsg("PDF export failed: "+e.message,true)}
   finally{window.__dbRoute=false;floor=keep.floor;hidden=keep.hidden;showCab=keep.showCab;showCirc=keep.showCirc;sel=keep.sel;
     if(keep.theme==null)document.documentElement.removeAttribute("data-theme");else document.documentElement.setAttribute("data-theme",keep.theme);
